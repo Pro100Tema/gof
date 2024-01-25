@@ -3,9 +3,10 @@ import numpy as np
 import os
 from   ostap.fitting.ds2numpy  import ds2numpy
 
-def dissimilarity_method(data, mc_data, sigma_bar=0.01, n_permutations=10):
+def dissimilarity_method(data, mc_data, var_lst, sigma_bar=0.01, n_permutations=10):
     nd = len(data)
     nmc = len(mc_data)
+    x_val = var_lst[0]
 
     # Define the weighting function
     def psi(x):
@@ -13,10 +14,9 @@ def dissimilarity_method(data, mc_data, sigma_bar=0.01, n_permutations=10):
 
     # Calculate the dissimilarity statistic T
     def calculate_T(data, mc_data):
-        term1 = np.sum([psi(np.linalg.norm(data[i]['x'] - data[j]['x'])) for i in range(nd) for j in range(i + 1, nd)])
-        term2 = np.sum([psi(np.linalg.norm(data[i]['x'] - mc_data[j]['x'])) for i in range(nd) for j in range(nmc)])
-        term3 = np.sum([psi(np.linalg.norm(mc_data[i]['x'] - data[j]['x'])) for i in range(nmc) for j in range(nd)])
-        return (1 / (nd**2)) * term1 - (1 / (nd * nmc)) * (term2 + term3)
+        term1 = np.sum([psi(np.abs(data[i][x_val] - data[j][x_val])) for i in range(nd) for j in range(i + 1, nd)])
+        term2 = np.sum([psi(np.abs(data[i][x_val] - mc_data[j][x_val])) for i in range(nd) for j in range(nmc)])
+        return (1 / (nd**2)) * term1 - (1 / (nd * nmc)) * term2
 
     observed_T = calculate_T(data, mc_data)
 
@@ -39,12 +39,12 @@ def dissimilarity_method(data, mc_data, sigma_bar=0.01, n_permutations=10):
 
 
 def create_mc_data(data):
-    x = RooRealVar("x", "x", 0, 100)
-    y = RooRealVar("y", "y", 0, 100)
+    x = RooRealVar("x", "x", -100, 100)
+    y = RooRealVar("y", "y", -100, 100)
 
     # Задаем параметры функции Гаусса
     mean = 0.0
-    sigma = 1.0
+    sigma = 5.0
 
     # Задаем количество точек в изначальном датасете
     num_points = len(data) * 100
@@ -73,9 +73,10 @@ def create_mc_data(data):
 
 def good_fits(data, data_mc, var_lst):
     ds = ds2numpy(data, var_lst)
+    
     ds_mc = ds2numpy(data_mc, var_lst)
 
-    observed_statistic, p_value = dissimilarity_method(ds, ds_mc)
+    observed_statistic, p_value = dissimilarity_method(ds, ds_mc, var_lst)
 
     print("Observed Dissimilarity Statistic:", observed_statistic)
     print("Permutation Test P-value:", p_value)
