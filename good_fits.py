@@ -1,92 +1,66 @@
+# input: 
+# data - initial dataset 
+# data_mc - generated MC dataset
+# var_lst - name of variables in data
+#
+# T_value, p_value = good_fits(dataset, dataset_mc, ['x', 'y'])
+# output:
+# T_value and p_value calculated using point-to-point-dissimilarity method
+
 from ROOT import * 
 import numpy as np
 import os
 from   ostap.fitting.ds2numpy  import ds2numpy
 
-def dissimilarity_method(data, mc_data, var_lst, sigma_bar=0.01, n_permutations=10):
+#point-to-point-dissimilarity method
+def dissimilarity_method(data, mc_data, var_lst, sigma=0.01, n_permutations=10):
     nd = len(data)
     nmc = len(mc_data)
     x_val = var_lst[0]
 
-    # Define the weighting function
-    def psi(x):
-        return np.exp(-x**2 / (2 * sigma_bar**2))
 
-    # Calculate the dissimilarity statistic T
+    # определение функции psi (из статьи выбор как e^(-x^2) / (2*sigma^2))
+    # значение sigma выбирается из статьи, sigma = 0.01 
+    def psi(x):
+        return np.exp(-x**2 / (2 * sigma**2))
+
+    # вычисление значения T-value по формуле из статьи
     def calculate_T(data, mc_data):
         term1 = np.sum([psi(np.abs(data[i][x_val] - data[j][x_val])) for i in range(nd) for j in range(i + 1, nd)])
         term2 = np.sum([psi(np.abs(data[i][x_val] - mc_data[j][x_val])) for i in range(nd) for j in range(nmc)])
         return (1 / (nd**2)) * term1 - (1 / (nd * nmc)) * term2
 
+    
     observed_T = calculate_T(data, mc_data)
 
-    # Permutation test
+    # реализация перестановочного теста (Permutation test)
     permuted_T_values = []
+
+    #повторяется n раз, для получения нескольких значений T-value,
+    #для получения значения p_value должно выполняться условие T < T_perm
     for _ in range(n_permutations):
+        # комбинация и случайный выбор исходных данных и данных МК
         combined_data = np.concatenate([data, mc_data])
         np.random.shuffle(combined_data)
 
         permuted_data = combined_data[:nd]
         permuted_mc_data = combined_data[nd:]
 
+        #вычисление T-value
         permuted_T = calculate_T(permuted_data, permuted_mc_data)
         permuted_T_values.append(permuted_T)
 
-    # Calculate p-value
+    # выбор p-value
     p_value = np.mean(permuted_T_values >= observed_T)
 
     return observed_T, p_value
 
 
-def create_mc_data(data):
-    x = RooRealVar("x", "x", -100, 100)
-    y = RooRealVar("y", "y", -100, 100)
-
-    # Задаем параметры функции Гаусса
-    mean = 0.0
-    sigma = 5.0
-
-    # Задаем количество точек в изначальном датасете
-    num_points = len(data) * 100
-
-    varset = RooArgSet(x, y)
-
-    dataset = ROOT.RooDataSet("dataset_mc", "dataset_mc", varset)
-
-    # Генерируем случайные данные для x
-    x_val = np.random.normal(mean, sigma, num_points)
-
-    # Генерируем соответствующие значения функции Гаусса
-    y_val = np.exp(-((x_val - mean) / sigma)**2 / 2) / (sigma * np.sqrt(2 * np.pi))
-
-    # Нормализуем значения функции, чтобы их сумма была равна 1
-    y_val /= np.sum(y_val)
-
-    for i in range(num_points):
-        x.setVal(x_val[i])
-        y.setVal(y_val[i])
-        dataset.add(varset)
-
-    dataset.SaveAs('dataset_mc.root')
-    return dataset
-
-
 def good_fits(data, data_mc, var_lst):
+
     ds = ds2numpy(data, var_lst)
-    
     ds_mc = ds2numpy(data_mc, var_lst)
 
-    observed_statistic, p_value = dissimilarity_method(ds, ds_mc, var_lst)
+    T_value, p_value = dissimilarity_method(ds, ds_mc, var_lst)
 
-    print("Observed Dissimilarity Statistic:", observed_statistic)
-    print("Permutation Test P-value:", p_value)
-
-f = ROOT.TFile('dataset.root', 'read')
-dataset = f['dataset']
-f.close()
-
-f = ROOT.TFile('dataset_mc.root', 'read')
-dataset_mc = f['dataset_mc']
-f.close()
-
-ws = good_fits(dataset, dataset_mc, ['x', 'y'])
+    return T_value, p_value
