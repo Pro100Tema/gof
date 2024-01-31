@@ -2,8 +2,8 @@
 # data - initial dataset 
 # data_mc - generated MC dataset
 # var_lst - name of variables in data
-#
-# T_value, p_value = good_fits(dataset, dataset_mc, ['x', 'y'])
+# method - name of selected method ('kNN', 'dism')
+# T_value, p_value = good_fits(dataset, dataset_mc, ['x', 'y'], 'kNN')
 # output:
 # T_value and p_value for each variable from var_lst calculated using point-to-point-dissimilarity method
 
@@ -12,6 +12,14 @@ import numpy as np
 import os
 from   ostap.fitting.ds2numpy  import ds2numpy
 
+
+def distance_to_nearest_neighbor(data):
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(data) # создание k-мерного дерева 
+    distances, _ = tree.query(data, k=2) # расчет расстояния до ближайшего соседа
+
+    return distances[:, 1]
 
 
 def dissimilarity_method(data, mc_data, var_lst, sigma=0.01, n_permutations=100):
@@ -57,10 +65,15 @@ def dissimilarity_method(data, mc_data, var_lst, sigma=0.01, n_permutations=100)
 
     return observed_T_values, p_values
 
-def good_fits(data, data_mc, var_lst):
+def good_fits(data, data_mc = [], var_lst = [], method = 'dism'):
 
-    ds = ds2numpy(data, var_lst)
-    ds_mc = ds2numpy(data_mc, var_lst)
+    if method.__eq__('kNN'):
+        return distance_to_nearest_neighbor(data)
 
-    T_value, p_value = dissimilarity_method(ds, ds_mc, var_lst)
-    return T_value, p_value
+    elif method.__eq__('dism'):
+        ds = ds2numpy(data, var_lst)
+        ds_mc = ds2numpy(data_mc, var_lst)
+        T_value, p_value = dissimilarity_method(ds, ds_mc, var_lst)
+        return T_value, p_value
+    else:
+        raise ValueError("Uknown method")
