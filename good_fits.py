@@ -22,6 +22,7 @@ def distance_to_nearest_neighbor(data):
     return distances[:, 1]
 
 
+
 def dissimilarity_method(data, mc_data, var_lst, sigma=0.01, n_permutations=100):
     nd = len(data)
     nmc = len(mc_data)
@@ -31,46 +32,48 @@ def dissimilarity_method(data, mc_data, var_lst, sigma=0.01, n_permutations=100)
     def psi(x):
         return np.exp(-x**2 / (2 * sigma**2))
 
+    # Calculation distance between two points from datasets
+    def calculate_distance(data1, data2):
+        num_vars = len(var_lst)
+        diff_squared = 0
+        for i in range(num_vars):
+            diff_squared += (data1[var_lst[i]][:, None] - data2[var_lst[i]])**2
+        return np.sqrt(diff_squared)
+
     # Calculation of the T-value according to the formula from the article
-    def calculate_T(data, mc_data, var):
-        term1 = np.sum(psi(np.abs(data[var][:, None] - data[var])), axis=(0, 1))
-        term2 = np.sum(psi(np.abs(data[var][:, None] - mc_data[var])), axis=(0, 1))
+    def calculate_T(data, mc_data):
+        distances_data = calculate_distance(data, data)
+        distances_mc_data = calculate_distance(data, mc_data)
+
+        term1 = np.sum(psi(distances_data), axis=(0, 1))
+        term2 = np.sum(psi(distances_mc_data), axis=(0, 1))
         return (1 / (nd**2)) * term1 - (1 / (nd * nmc)) * term2
 
-    # numpy arrays for calculated T-values
-    observed_T_values = np.zeros(len(var_lst))
-    
-    # Calculate all T-values
-    for idx, var in enumerate(var_lst):
-        observed_T = calculate_T(data, mc_data, var)
-        observed_T_values[idx] = observed_T
-    
+    # Calculate T-value
+    observed_T = calculate_T(data, mc_data)
+
+
     # Implementation of the permutation test for each variable
     # Repeated n times to obtain multiple T-value instances,
     # to get the p_value, the condition T < T_perm must be satisfied
-    p_values = np.zeros_like(observed_T_values)
-    observed_T_sum = np.sum(observed_T_values)
-    observed_T_values_perm = np.zeros(n_permutations)
-
-    # Iterate over a range of values representing the number of permutations
+    permuted_T_values = np.zeros(n_permutations)
     for i in range(n_permutations):
         # Combination and random selection of original data and MC data
         combined_data = np.concatenate([data, mc_data])
         np.random.shuffle(combined_data)
-        
         permuted_data = combined_data[:nd]
         permuted_mc_data = combined_data[nd:]
-        
-        # Calculation of T-values for permuted data
-        permuted_T_values = np.array([calculate_T(permuted_data, permuted_mc_data, var) for var in var_lst])
-        observed_T_values_perm[i] = np.sum(permuted_T_values)
-    
+
+        # Calculation of T-value for permuted data
+        permuted_T_values[i] = calculate_T(permuted_data, permuted_mc_data)
+
     # Calculate p-value as the fraction of cases 
     # where the sum of T-values for permuted data
     # is less than the sum of T-values for observed data
-    p_value = np.mean(observed_T_values_perm < observed_T_sum)
-    
-    return observed_T_values, p_value
+    p_value = np.mean(permuted_T_values < observed_T)
+
+    return observed_T, p_value
+
 
 def good_fits(data, data_mc = [], var_lst = [], method = 'dism'):
 
