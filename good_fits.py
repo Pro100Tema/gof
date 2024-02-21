@@ -43,10 +43,12 @@ def psi(x, sigma=0.01):
 
 # Calculation distance between two points from datasets
 def calculate_distance(data1, data2, var_lst):
-    diff_squared = 0
-    for var in var_lst:
-        diff_squared += (data1[var][:, None] - data2[var])**2
-    return np.sqrt(diff_squared)
+    num_points = len(data1)
+    distances = np.zeros(num_points)
+    for i in range(num_points):
+        diff_squared = np.sum([(data1[i][var] - data2[i][var])**2 for var in var_lst])
+        distances[i] = np.sqrt(diff_squared)
+    return distances
 
 def dissimilarity_method(data, mc_data, var_lst, sigma=0.01, n_permutations=1000):
     nd = len(data)
@@ -72,7 +74,8 @@ def dissimilarity_method(data, mc_data, var_lst, sigma=0.01, n_permutations=1000
         permuted_distances_mc_data = calculate_distance(permuted_data, permuted_mc_data, var_lst)
         permuted_T_values[i] = calculate_T(psi(permuted_distances_data), psi(permuted_distances_mc_data), nd, nmc)
 
-    # Calculate p-value as the fraction of cases where the sum of T-values for permuted data
+    # Calculate p-value as the fraction of cases 
+    # where the sum of T-values for permuted data
     # is less than the sum of T-values for observed data
     p_value = np.mean(permuted_T_values < observed_T)
 
