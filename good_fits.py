@@ -11,8 +11,34 @@ from ROOT import *
 import numpy as np
 import os
 from   ostap.fitting.ds2numpy  import ds2numpy
+import tracemalloc
+
+# decorator that tracks the maximum memory usage
+# and returnss information about the location of the maximum memory usage
+def memory_test(func):
+    def wrapper(*args, **kwargs):
+        # start tracking memory usage
+        tracemalloc.start()
+        # call the original function with the provided arguments
+        result = func(*args, **kwargs)
+        snapshot = tracemalloc.take_snapshot()
+        # get statistics of memory usage for each line of code
+        top_stats = snapshot.statistics('lineno')
+
+        # find the maximum memory usage and 
+        # line of code with the maximum memory usage
+        max_memory = max(stat.size for stat in top_stats)
+        max_memory_line = next(stat for stat in top_stats if stat.size == max_memory)
+        print("Max memory usage:", max_memory, "byte")
+        print("Max memory usage location:", max_memory_line.traceback.format())
+
+        # Stop tracking memory usage
+        tracemalloc.stop()
+        return result
+    return wrapper
 
 
+@memory_test
 def distance_to_nearest_neighbor(data):
     from scipy.spatial import cKDTree
 
@@ -20,7 +46,6 @@ def distance_to_nearest_neighbor(data):
     distances, _ = tree.query(data, k=2) # calculating the distance to the nearest neighbor
 
     return distances[:, 1]
-    
 
 # Calculation of the T-value according to the formula from the article
 def calculate_T(psi_distances_data, psi_distances_mc_data, nd, nmc):
@@ -49,7 +74,8 @@ def calculate_distance(data1, data2, var_lst):
         diff_squared = np.sum([(data1[i][var] - data2[i][var])**2 for var in var_lst])
         distances[i] = np.sqrt(diff_squared)
     return distances
-
+    
+@memory_test
 def dissimilarity_method(data, mc_data, var_lst, sigma=0.01, n_permutations=1000):
     nd = len(data)
     nmc = len(mc_data)
@@ -80,7 +106,6 @@ def dissimilarity_method(data, mc_data, var_lst, sigma=0.01, n_permutations=1000
     p_value = np.mean(permuted_T_values < observed_T)
 
     return observed_T, p_value
-
 
 def good_fits(data, data_mc = [], var_lst = [], method = 'dism'):
 
