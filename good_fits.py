@@ -67,14 +67,25 @@ def psi(x, sigma=0.01):
     return np.exp(-x**2 / (2 * sigma**2))
 
 # Calculation distance between two points from datasets
+#def calculate_distance(data1, data2, var_lst):
+#    num_points = len(data1)
+#    distances = np.zeros(num_points)
+#    for i in range(num_points):
+#        diff_squared = np.sum([(data1[i][var] - data2[i][var])**2 for var in var_lst])
+#        distances[i] = np.sqrt(diff_squared)
+#    return distances
+
+from scipy.spatial.distance import cdist
+# Calculation distance between two points from datasets
 def calculate_distance(data1, data2, var_lst):
-    num_points = len(data1)
-    distances = np.zeros(num_points)
-    for i in range(num_points):
-        diff_squared = np.sum([(data1[i][var] - data2[i][var])**2 for var in var_lst])
-        distances[i] = np.sqrt(diff_squared)
+    data1_vars = np.column_stack([data1[var] for var in var_lst])
+    data2_vars = np.column_stack([data2[var] for var in var_lst])
+
+    distances = cdist(data1_vars, data2_vars, 'euclidean').flatten()
     return distances
-    
+
+
+
 @memory_test
 def dissimilarity_method(data, mc_data, var_lst, sigma=0.01, n_permutations=1000):
     nd = len(data)
