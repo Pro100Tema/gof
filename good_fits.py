@@ -12,6 +12,8 @@ import numpy as np
 import os
 from   ostap.fitting.ds2numpy  import ds2numpy
 import tracemalloc
+from scipy.spatial.distance import cdist
+import concurrent.futures
 
 # decorator that tracks the maximum memory usage
 # and returnss information about the location of the maximum memory usage
@@ -67,16 +69,6 @@ def psi(x, sigma=0.01):
     return np.exp(-x**2 / (2 * sigma**2))
 
 # Calculation distance between two points from datasets
-#def calculate_distance(data1, data2, var_lst):
-#    num_points = len(data1)
-#    distances = np.zeros(num_points)
-#    for i in range(num_points):
-#        diff_squared = np.sum([(data1[i][var] - data2[i][var])**2 for var in var_lst])
-#        distances[i] = np.sqrt(diff_squared)
-#    return distances
-
-from scipy.spatial.distance import cdist
-# Calculation distance between two points from datasets
 def calculate_distance(data1, data2, var_lst):
     data1_vars = np.column_stack([data1[var] for var in var_lst])
     data2_vars = np.column_stack([data2[var] for var in var_lst])
@@ -84,10 +76,18 @@ def calculate_distance(data1, data2, var_lst):
     distances = cdist(data1_vars, data2_vars, 'euclidean').flatten()
     return distances
 
-
+# Implementation of the permutation test for each variable
+# Repeated n times to obtain multiple T-value instances,
+# to get the p_value, the condition T < T_perm must be satisfied
+def calculate_permuted_T(data, mc_data, var_lst, sigma):
+    permuted_data, permuted_mc_data = permute_data(data, mc_data)
+    permuted_distances_data = calculate_distance(permuted_data, permuted_data, var_lst)
+    permuted_distances_mc_data = calculate_distance(permuted_data, permuted_mc_data, var_lst)
+    permuted_T_value = calculate_T(psi(permuted_distances_data, sigma), psi(permuted_distances_mc_data, sigma), len(permuted_data), len(permuted_mc_data))
+    return permuted_T_value
 
 @memory_test
-def dissimilarity_method(data, mc_data, var_lst, sigma=0.01, n_permutations=1000):
+def dissimilarity_method(data, mc_data, var_lst, sigma=0.01, n_permutations=100):
     nd = len(data)
     nmc = len(mc_data)
 
@@ -101,15 +101,22 @@ def dissimilarity_method(data, mc_data, var_lst, sigma=0.01, n_permutations=1000
 
     observed_T = calculate_T(psi_distances_data, psi_distances_mc_data, nd, nmc)
 
-    # Implementation of the permutation test for each variable
-    # Repeated n times to obtain multiple T-value instances,
-    # to get the p_value, the condition T < T_perm must be satisfied
-    permuted_T_values = np.zeros(n_permutations)
-    for i in range(n_permutations):
-        permuted_data, permuted_mc_data = permute_data(data, mc_data)
-        permuted_distances_data = calculate_distance(permuted_data, permuted_data, var_lst)
-        permuted_distances_mc_data = calculate_distance(permuted_data, permuted_mc_data, var_lst)
-        permuted_T_values[i] = calculate_T(psi(permuted_distances_data), psi(permuted_distances_mc_data), nd, nmc)
+
+    #PREVIOUS VERSION
+    #permuted_T_values = np.zeros(n_permutations)
+    #for i in range(n_permutations):
+    #    permuted_data, permuted_mc_data = permute_data(data, mc_data)
+    #    permuted_distances_data = calculate_distance(permuted_data, permuted_data, var_lst)
+    #    permuted_distances_mc_data = calculate_distance(permuted_data, permuted_mc_data, var_lst)
+    #    permuted_T_values[i] = calculate_T(psi(permuted_distances_data), psi(permuted_distances_mc_data), nd, nmc)
+
+    # add parallel process to speed up permutation test work 
+    # n_permutations = 100, time = 1,6 sec
+    # n_permutations = 1000, time = 5.5 sec
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        tasks = [executor.submit(calculate_permuted_T, data, mc_data, var_lst, sigma) for _ in range(n_permutations)]
+        permuted_T_values = np.array([task.result() for task in concurrent.futures.as_completed(tasks)])
+
 
     # Calculate p-value as the fraction of cases 
     # where the sum of T-values for permuted data
