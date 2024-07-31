@@ -26,20 +26,29 @@ else :
     logger = getLogger ( __name__ )
 # =============================================================================
 
-def perform_test(data_file, mc_file, var_lst, method='PPD'):
+def perform_test(data_file, mc_file=None, var_lst=None, method='PPD'):
     # Load dataset
     f = TFile(data_file, 'read')
     dataset = f['dataset']
     f.close()
 
-    # Load MC dataset
-    f = TFile(mc_file, 'read')
-    dataset_mc = f['dataset_mc']
-    f.close()
+    if method != 'kNN' and mc_file is not None:
+        # Load MC dataset
+        f = TFile(mc_file, 'read')
+        dataset_mc = f['dataset_mc']
+        f.close()
+    else:
+        dataset_mc = None
 
     # Run good_fits function
-    T_value, p_value = good_fits(dataset, dataset_mc, var_lst, method)
-    return T_value, p_value
+    if method == 'kNN':
+        result = good_fits(dataset, method=method)
+        return result, None  # kNN method returns only one value
+    else:
+        if var_lst is None:
+            raise ValueError("var_lst must be provided for methods other than kNN")
+        T_value, p_value = good_fits(dataset, dataset_mc, var_lst, method)
+        return T_value, p_value
 
 def measure_memory_usage(test_func, *args):
     tracemalloc.start()
@@ -57,80 +66,96 @@ def measure_memory_usage(test_func, *args):
     return result
 
 # Test functions
-def test_p2p_cdist():
+def test_ppd_cdist():
     result = measure_memory_usage(perform_test, 'dataset.root', 'dataset_mc.root', ['x', 'y'], 'PPD')
     print("Permutation Test P-value:", result[1])
 
-def test_p2p_rd_10k():
+def test_ppd_rd_10k():
     result = measure_memory_usage(perform_test, 'dataset_rd_10k.root', 'dataset_mc.root', ['x', 'y'], 'PPD')
     print("Permutation Test P-value:", result[1])
 
-def test_p2p_mc_100k():
+def test_ppd_mc_100k():
     result = measure_memory_usage(perform_test, 'dataset_rd_10k.root', 'dataset_mc_100k.root', ['x', 'y'], 'PPD')
     print("Permutation Test P-value:", result[1])
 
 def test_kNN():
-    f = ROOT.TFile('dataset.root', 'read')
-    dataset = f['dataset']
-    f.close()
-
-    distance = good_fits(dataset, method = 'kNN')
-    print("Distances for dataset:", distance)
+    result = measure_memory_usage(perform_test, 'dataset.root', None, None, 'kNN')
+    print("kNN Test Result:", result[0])
 
 def test_LD():
-    f = ROOT.TFile('dataset.root', 'read')
-    dataset = f['dataset']
-    f.close()
+    result = measure_memory_usage(perform_test, 'dataset.root', 'dataset_mc.root', ['x', 'y'], 'LD')
+    print("Permutation Test P-value:", result[1])
 
-    f = TFile('dataset_mc.root', 'read')
-    dataset_mc = f['dataset_mc']
-    f.close()
+def test_LD_rd_10k():
+    result = measure_memory_usage(perform_test, 'dataset_rd_10k.root', 'dataset_mc.root', ['x', 'y'], 'LD')
+    print("Permutation Test P-value:", result[1])
 
-    U_value, p_value = good_fits(dataset, dataset_mc, ['x', 'y'], method = 'LD')
-    print("Permutation Test P-value:", p_value)
+def test_LD_mc_100k():
+    result = measure_memory_usage(perform_test, 'dataset_rd_10k.root', 'dataset_mc_100k.root', ['x', 'y'], 'LD')
+    print("Permutation Test P-value:", result[1])
 
 def test_KB():
-    f = ROOT.TFile('dataset.root', 'read')
-    dataset = f['dataset']
-    f.close()
+    result = measure_memory_usage(perform_test, 'dataset.root', 'dataset_mc.root', ['x', 'y'], 'KB')
+    print("Permutation Test P-value:", result[1])
 
-    f = TFile('dataset_mc.root', 'read')
-    dataset_mc = f['dataset_mc']
-    f.close()
+def test_KB_rd_10k():
+    result = measure_memory_usage(perform_test, 'dataset_rd_10k.root', 'dataset_mc.root', ['x', 'y'], 'KB')
+    print("Permutation Test P-value:", result[1])
 
-    U_value, p_value = good_fits(dataset, dataset_mc, ['x', 'y'], method = 'KB')
-    print("Permutation Test P-value:", p_value)
+def test_KB_mc_100k():
+    result = measure_memory_usage(perform_test, 'dataset_rd_10k.root', 'dataset_mc_100k.root', ['x', 'y'], 'KB')
+    print("Permutation Test P-value:", result[1])
 
 def test_MS():
-    f = ROOT.TFile('dataset.root', 'read')
-    dataset = f['dataset']
-    f.close()
+    result = measure_memory_usage(perform_test, 'dataset.root', 'dataset_mc.root', ['x', 'y'], 'MS')
+    print("Permutation Test P-value:", result[1])
 
-    f = TFile('dataset_mc.root', 'read')
-    dataset_mc = f['dataset_mc']
-    f.close()
+def test_MS_rd_10k():
+    result = measure_memory_usage(perform_test, 'dataset_rd_10k.root', 'dataset_mc.root', ['x', 'y'], 'MS')
+    print("Permutation Test P-value:", result[1])
 
-    U_value, p_value = good_fits(dataset, dataset_mc, ['x', 'y'], method = 'MS')
-    print("Permutation Test P-value:", p_value)
+def test_MS_mc_100k():
+    result = measure_memory_usage(perform_test, 'dataset_rd_10k.root', 'dataset_mc_100k.root', ['x', 'y'], 'MS')
+    print("Permutation Test P-value:", result[1])
 
-if '__main__' == __name__ :
-    with timing ('Test p2p cdist' , logger ) :
-        test_p2p_cdist()
+if __name__ == '__main__':
+    with timing('Test PPD cdist', logger):
+        test_ppd_cdist()
     
-    with timing ('Test p2p rd 10k' , logger ) :
-        test_p2p_rd_10k()
+    with timing('Test PPD rd 10k', logger):
+        test_ppd_rd_10k()
 
-    with timing ('Test p2p mc 100k' , logger ) :
-        test_p2p_mc_100k()
+    with timing('Test PPD mc 100k', logger):
+        test_ppd_mc_100k()
     
-    with timing ('Test kNN' , logger ) :
+    with timing('Test kNN', logger):
         test_kNN()
     
-    with timing ('Test LD' , logger ) :
+    with timing('Test LD', logger):
         test_LD()
 
-    with timing ('Test KB' , logger ) :
+    with timing('Test LD rd 10k', logger):
+        test_LD_rd_10k()
+
+    with timing('Test LD mc 100k', logger):
+        test_LD_mc_100k()
+
+    with timing('Test KB', logger):
         test_KB()
+
+    with timing('Test KB rd 10k', logger):
+        test_KB_rd_10k()
+
+    with timing('Test KB mc 100k', logger):
+        test_KB_mc_100k()
     
+    with timing('Test MS', logger):
+        test_MS()
+
+    with timing('Test MS rd 10k', logger):
+        test_MS_rd_10k()
+
+    with timing('Test MS mc 100k', logger):
+        test_MS_mc_100k()
     with timing ('Test MS' , logger ) :
         test_MS()
