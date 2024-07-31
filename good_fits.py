@@ -45,13 +45,14 @@ def memory_test(func):
     return wrapper
 
 
+#kNN method
 def distance_to_nearest_neighbor(data):
     from scipy.spatial import cKDTree
 
     tree = cKDTree(data) # creating k-tree
     distances, _ = tree.query(data, k=2) # calculating the distance to the nearest neighbor
 
-    return distances[:, 1]
+    return np.mean(distances[:, 1])
 
 # Calculation of the T-value according to the formula from the article
 @njit
@@ -72,69 +73,30 @@ def calculate_chunk_distances(chunk, data2_vars):
     distances = np.sqrt(np.sum((chunk[:, np.newaxis, :] - data2_vars[np.newaxis, :, :])**2, axis=2)).flatten()
     return np.sum(distances)
 
-def calculate_distance(data1, data2, var_lst, chunk_size=1000):
+# if len(data_rd) * len(data_mc) > 10^7, using cdist method to calculate distance in ppd,
+# else separeate data and calculate distance
+def calculate_distance_ppd(data1, data2, var_lst, chunk_size=1000):
     data1_vars = np.column_stack([data1[var] for var in var_lst])
     data2_vars = np.column_stack([data2[var] for var in var_lst])
 
     if len(data1) * len(data2) > 1e7:  # Arbitrary threshold for switching methods
-        #print("циклы")
         n1 = data1_vars.shape[0]
-        #n2 = data2_vars.shape[0]
-
-        #distances = []
         dists = 0.0
         for i in range(0, n1, chunk_size):
             chunk = data1_vars[i:i + chunk_size]
-            #dists = np.sqrt(np.sum((chunk[:, np.newaxis, :] - data2_vars[np.newaxis, :, :])**2, axis=2)).flatten()
             dists += calculate_chunk_distances(chunk, data2_vars)
-            #distances.append(dists)
-
-        #return np.concatenate(distances, axis=0)
         return dists
     else:
-        #print("cdist")
-        #data1_vars = np.column_stack([data1[var] for var in var_lst])
-        #data2_vars = np.column_stack([data2[var] for var in var_lst])
         distances = cdist(data1_vars, data2_vars, 'euclidean').flatten()
         return np.sum(distances)
 
 # Implementation of the permutation test for each variable
-def calculate_permuted_T(data, mc_data, var_lst):
+def calculate_permuted_T_ppd(data, mc_data, var_lst):
     permuted_data, permuted_mc_data = permute_data(data, mc_data)
-    permuted_distances_data = calculate_distance(permuted_data, permuted_data, var_lst)
-    permuted_distances_mc_data = calculate_distance(permuted_data, permuted_mc_data, var_lst)
+    permuted_distances_data = calculate_distance_ppd(permuted_data, permuted_data, var_lst)
+    permuted_distances_mc_data = calculate_distance_ppd(permuted_data, permuted_mc_data, var_lst)
     permuted_T_value = calculate_T(permuted_distances_data, permuted_distances_mc_data, len(permuted_data), len(permuted_mc_data))
     return permuted_T_value
-
-def dissimilarity_method(data, mc_data, var_lst, n_permutations=25):
-    if len(data) == 0 or len(mc_data) == 0:
-        raise ValueError("Data and MC data must not be empty")
-
-    nd = len(data)
-    nmc = len(mc_data)
-
-    # Pre-calculate distances between original data and MC data
-    distances_data = calculate_distance(data, data, var_lst)
-    distances_mc_data = calculate_distance(data, mc_data, var_lst)
-
-    observed_T = calculate_T(distances_data, distances_mc_data, nd, nmc)
-
-
-    # Parallel processing of permutation tests
-    try:
-        permuted_T_values = Parallel(n_jobs=-1, backend="loky")(
-            delayed(calculate_permuted_T)(data, mc_data, var_lst) for _ in range(n_permutations)
-        )
-        permuted_T_values = np.array(permuted_T_values)
-    except Exception as e:
-        print(f"Error in joblib Parallel: {e}")
-        traceback.print_exc()
-        raise e
-
-    # Calculate p-value
-    p_value = np.mean(permuted_T_values < observed_T)
-
-    return observed_T, p_value
 
 # Function to calculate local density using structured array
 def calculate_local_density(data, k=5):
@@ -153,34 +115,6 @@ def calculate_permuted_U_LD(data, mc_data, k):
     U_stat, _ = mannwhitneyu(permuted_density_data, permuted_density_mc_data, alternative='two-sided')
     return U_stat
 
-# Main function to execute Local-Density method
-def local_density_method(data, mc_data, k=5, n_permutations=25):
-    if len(data) == 0 or len(mc_data) == 0:
-        raise ValueError("Data and MC data must not be empty")
-
-    # Calculate local densities for original data and MC data
-    density_data = calculate_local_density(data, k)
-    density_mc_data = calculate_local_density(mc_data, k)
-
-    # Perform Mann-Whitney U test
-    observed_U, p_value = mannwhitneyu(density_data, density_mc_data, alternative='two-sided')
-
-    # Parallel processing of permutation tests
-    try:
-        permuted_U_values = Parallel(n_jobs=-1, backend="loky")(
-            delayed(calculate_permuted_U_LD)(data, mc_data, k) for _ in range(n_permutations)
-        )
-        permuted_U_values = np.array(permuted_U_values)
-    except Exception as e:
-        print(f"Error in joblib Parallel: {e}")
-        traceback.print_exc()
-        raise e
-
-    # Calculate permutation p-value
-    permutation_p_value = np.mean(permuted_U_values < observed_U)
-
-    return observed_U, permutation_p_value
-
 # Function to calculate kernel density
 def calculate_kernel_density(data, bw_method='scott'):
     data_numeric = np.vstack([data[var] for var in data.dtype.names]).T
@@ -196,43 +130,18 @@ def calculate_permuted_U_KB(data, mc_data, bw_method):
     U_stat, _ = mannwhitneyu(permuted_density_data, permuted_density_mc_data, alternative='two-sided')
     return U_stat
 
-# Main function to execute Kernel-Based method
-def kernel_based_method(data, mc_data, bw_method='scott', n_permutations=25):
-    if len(data) == 0 or len(mc_data) == 0:
-        raise ValueError("Data and MC data must not be empty")
-
-    # Calculate kernel densities for original data and MC data
-    density_data = calculate_kernel_density(data, bw_method)
-    density_mc_data = calculate_kernel_density(mc_data, bw_method)
-
-    # Perform Mann-Whitney U test
-    observed_U, p_value = mannwhitneyu(density_data, density_mc_data, alternative='two-sided')
-
-    # Parallel processing of permutation tests
-    try:
-        permuted_U_values = Parallel(n_jobs=-1, backend="loky")(
-            delayed(calculate_permuted_U_KB)(data, mc_data, bw_method) for _ in range(n_permutations)
-        )
-        permuted_U_values = np.array(permuted_U_values)
-    except Exception as e:
-        print(f"Error in joblib Parallel: {e}")
-        traceback.print_exc()
-        raise e
-
-    # Calculate permutation p-value
-    permutation_p_value = np.mean(permuted_U_values < observed_U)
-
-    return observed_U, permutation_p_value
-
+# calculate T-value for mixed sample method
 def calculate_T_MS(sum_within, sum_between, n_within, n_between):
     return (1 / (n_within**2)) * sum_within - (1 / (n_within * n_between)) * sum_between
 
+# permute data for mixed sample method
 def permute_and_split(data, mc_data):
     combined_data = np.concatenate([data, mc_data])
     np.random.shuffle(combined_data)
     half_point = len(combined_data) // 2
     return combined_data[:half_point], combined_data[half_point:]
 
+# calculate distance using cdist for mixed sample method
 def calculate_distances_MS(data1, data2):
     data1_numeric = np.vstack([data1[var] for var in data1.dtype.names]).T
     data2_numeric = np.vstack([data2[var] for var in data2.dtype.names]).T
@@ -241,7 +150,9 @@ def calculate_distances_MS(data1, data2):
 def sum_distances(distances):
     return np.sum(distances)
 
+# add permutation test for mixed sample method
 def calculate_permuted_T_mixed(data, mc_data):
+
     permuted_data, permuted_mc_data = permute_and_split(data, mc_data)
     within_distances = calculate_distances_MS(permuted_data, permuted_data)
     between_distances = calculate_distances_MS(permuted_data, permuted_mc_data)
@@ -250,59 +161,91 @@ def calculate_permuted_T_mixed(data, mc_data):
     permuted_T_value = calculate_T_MS(sum_within, sum_between, len(permuted_data), len(permuted_mc_data))
     return permuted_T_value
 
-def mixed_samples_method(data, mc_data, n_permutations=25):
+def choose_gof_method(data, mc_data, method, var_lst=None, k=5, bw_method='scott', n_permutations=25):
     if len(data) == 0 or len(mc_data) == 0:
         raise ValueError("Data and MC data must not be empty")
 
-    nd = len(data)
-    nmc = len(mc_data)
-
-    observed_within_distances = calculate_distances_MS(data, data)
-    observed_between_distances = calculate_distances_MS(data, mc_data)
-
-    sum_within = sum_distances(observed_within_distances)
-    sum_between = sum_distances(observed_between_distances)
-
-    observed_T = calculate_T_MS(sum_within, sum_between, nd, nmc)
-
     try:
-        permuted_T_values = Parallel(n_jobs=-1, backend="loky")(
-            delayed(calculate_permuted_T_mixed)(data, mc_data) for _ in range(n_permutations)
+        if method == 'PPD':
+            # Pre-calculate distances between original data and MC data
+            distances_data = calculate_distance_ppd(data, data, var_lst)
+            distances_mc_data = calculate_distance_ppd(data, mc_data, var_lst)
+
+            observed_T = calculate_T(distances_data, distances_mc_data, len(data), len(mc_data))
+            
+            # add parallel processing
+            calculate_permuted = lambda: calculate_permuted_T_ppd(data, mc_data, var_lst)
+            observed_value = observed_T
+        
+        elif method == 'LD':
+            
+            # Pre-calculate distances for data and MC data
+            density_data = calculate_local_density(data, k)
+            density_mc_data = calculate_local_density(mc_data, k)
+            observed_U, p_value = mannwhitneyu(density_data, density_mc_data, alternative='two-sided')
+            
+            # add parallel processing
+            calculate_permuted = lambda: calculate_permuted_U_LD(data, mc_data, k)
+            observed_value = observed_U
+        
+        elif method == 'KB':
+
+            # Pre-calculate distances for data and MC data
+            density_data = calculate_kernel_density(data, bw_method)
+            density_mc_data = calculate_kernel_density(mc_data, bw_method)
+            observed_U, p_value = mannwhitneyu(density_data, density_mc_data, alternative='two-sided')
+            
+             # add parallel processing
+            calculate_permuted = lambda: calculate_permuted_U_KB(data, mc_data, bw_method)
+            observed_value = observed_U
+        
+        elif method == 'MS':
+            
+            # Pre-calculate distances for data and MC data
+            observed_within_distances = calculate_distances_MS(data, data)
+            observed_between_distances = calculate_distances_MS(data, mc_data)
+            # get sum of distances
+            sum_within = sum_distances(observed_within_distances)
+            sum_between = sum_distances(observed_between_distances)
+            observed_T = calculate_T_MS(sum_within, sum_between, len(data), len(mc_data))
+            
+             # add parallel processing
+            calculate_permuted = lambda: calculate_permuted_T_mixed(data, mc_data)
+            observed_value = observed_T
+        
+        else:
+            raise ValueError("Invalid method specified")
+
+        # Parallel processing of permutation tests
+        permuted_values = Parallel(n_jobs=-1, backend="loky")(
+            delayed(calculate_permuted)() for _ in range(n_permutations)
         )
-        permuted_T_values = np.array(permuted_T_values)
+        
+        #calculate p-value after permutations
+        permuted_values = np.array(permuted_values)
+        p_value = np.mean(permuted_values < observed_value)
+        
+        return observed_value, p_value
+
     except Exception as e:
         print(f"Error in joblib Parallel: {e}")
         traceback.print_exc()
         raise e
 
-    p_value = np.mean(permuted_T_values < observed_T)
-
-    return observed_T, p_value
-
-
-def good_fits(data, data_mc=[], var_lst=[], method='PPD', k = 5, bw_method='scott'):
-
+def good_fits(data, data_mc=[], var_lst=[], method='PPD', k=5, bw_method='scott'):
     if not isinstance(var_lst, list) or not all(isinstance(var, str) for var in var_lst):
         raise TypeError("Var list must be a list of strings")
     if method not in ['kNN', 'PPD', 'LD', 'KB', 'MS']:
         raise ValueError("Unknown method. Use 'kNN', 'PPD', 'LD', 'KB' or 'MS'")
-    
-    ds = ds2numpy(data, var_lst)
-    ds_mc = ds2numpy(data_mc, var_lst)
-    
+
     if method == 'kNN':
         return distance_to_nearest_neighbor(data)
-    elif method == 'PPD':
-        T_value, p_value = dissimilarity_method(ds, ds_mc, var_lst)
-        return T_value, p_value
-    elif method == 'LD':
-        U_value_LD, p_value = local_density_method(ds, ds_mc, k)
-        return U_value_LD, p_value
-    elif method == 'KB':
-        U_value_KB, p_value = kernel_based_method(ds, ds_mc, bw_method)
-        return U_value_KB, p_value
-    elif method == 'MS':
-        T_value, p_value = mixed_samples_method(ds, ds_mc)
-        return T_value, p_value
+
+    ds = ds2numpy(data, var_lst)
+    ds_mc = ds2numpy(data_mc, var_lst)
+
+    if method in ['PPD', 'LD', 'KB', 'MS']:
+        T_or_U_value, p_value = choose_gof_method(ds, ds_mc, method, var_lst, k, bw_method)
+        return T_or_U_value, p_value
     else:
         raise ValueError("Unknown method")
