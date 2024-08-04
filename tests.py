@@ -13,7 +13,8 @@ from   ostap.fitting.variables import SETVAR
 from   ostap.utils.utils       import vrange 
 from   builtins                import range
 import ROOT, time
-from good_fits import good_fits
+#from good_fits import good_fits
+from gof_classes import good_fits
 import tracemalloc
 from ROOT import TFile
 # =============================================================================
