@@ -19,121 +19,151 @@ from numba import njit
 from joblib import Parallel, delayed
 from scipy.spatial import KDTree
 from scipy.stats import mannwhitneyu, gaussian_kde
+from ROOT import RooAbsPdf, RooDataSet
 
-# Interface for classes that implement comparison methods
-class SimilarityInterface:
-    def compare_datasets(self, dataset1, dataset2):
-        raise NotImplementedError("This method should be overridden by subclasses")
-
-    def calculate_permuted_statistic(self, dataset1, dataset2):
-        raise NotImplementedError("This method should be overridden by subclasses")
-
-# Class that implements the PPD method for comparing datasets
-class PPDSimilarity(SimilarityInterface):
-    def __init__(self, var_lst, chunk_size=1000):
+class DataToNumpy:
+    def __init__(self, data, var_lst):
+        self.data = data
         self.var_lst = var_lst
-        self.chunk_size = chunk_size
+    
+    def transform(self):
+        if isinstance(self.data, np.ndarray):
+            return self.data
+        elif isinstance(self.data, RooDataSet):
+            return ds2numpy(self.data, self.var_lst)
+        elif isinstance(self.data, RooAbsPdf):
+            return self._transform_pdf()
+        else:
+            raise ValueError(f"Unsupported data type: {type(self.data)}")
 
-    # Calculation of the T-value according to the formula from the article
+    def _transform_pdf(self, n_events=1000):
+        if isinstance(self.data, RooAbsPdf):
+            data_pdf = self.data.generate(RooArgSet(self.var_lst), n_events)
+            return ds2numpy(data_pdf, self.var_lst)
+        else:
+            raise ValueError("Data is not a valid PDF for transformation.")
+
+class GOFMethods:
+    def __init__(self, data, data_mc, var_lst):
+        self.data = data
+        self.data_mc = data_mc
+        self.var_lst = var_lst
+
     @staticmethod
-    @njit
     def calculate_T(sum_nd, sum_mc, nd, nmc):
         return (1 / (nd**2)) * sum_nd - (1 / (nd * nmc)) * sum_mc
 
-    # Efficient distance calculation with chunking for large datasets
     @staticmethod
-    @njit
     def calculate_chunk_distances(chunk, data2_vars):
         distances = np.sqrt(np.sum((chunk[:, np.newaxis, :] - data2_vars[np.newaxis, :, :])**2, axis=2)).flatten()
         return np.sum(distances)
 
-    # if len(data_rd) * len(data_mc) > 10^7, using cdist method to calculate distance in ppd,
-    # else separeate data and calculate distance
-    def calculate_distance(self, data1, data2):
-        data1_vars = np.column_stack([data1[var] for var in self.var_lst])
-        data2_vars = np.column_stack([data2[var] for var in self.var_lst])
+    @staticmethod
+    def calculate_distance_ppd(data1, data2, var_lst, chunk_size=1000):
+        data1_vars = np.column_stack([data1[var] for var in var_lst])
+        data2_vars = np.column_stack([data2[var] for var in var_lst])
 
-        if len(data1) * len(data2) > 1e7: # Arbitrary threshold for switching methods
-            n1 = data1_vars.shape[0]
+        if len(data1) * len(data2) > 1e7:
             dists = 0.0
-            for i in range(0, n1, self.chunk_size):
-                chunk = data1_vars[i:i + self.chunk_size]
-                dists += self.calculate_chunk_distances(chunk, data2_vars)
+            for i in range(0, len(data1_vars), chunk_size):
+                chunk = data1_vars[i:i + chunk_size]
+                dists += GOFMethods.calculate_chunk_distances(chunk, data2_vars)
             return dists
         else:
             distances = cdist(data1_vars, data2_vars, 'euclidean').flatten()
             return np.sum(distances)
 
-    # Implementation of the permutation test for each variable
-    def compare_datasets(self, dataset1, dataset2):
-        # Pre-calculate distances between original data and MC data
-        distances_data = self.calculate_distance(dataset1, dataset1)
-        distances_mc_data = self.calculate_distance(dataset1, dataset2)
-        T_value = self.calculate_T(distances_data, distances_mc_data, len(dataset1), len(dataset2))
-        return T_value
-
-    # Combination and random selection of original data and MC data
-    def calculate_permuted_statistic(self, data, mc_data):
-        permuted_data, permuted_mc_data = self.permute_data(data, mc_data)
-        permuted_distances_data = self.calculate_distance(permuted_data, permuted_data)
-        permuted_distances_mc_data = self.calculate_distance(permuted_data, permuted_mc_data)
+    def calculate_permuted_T_ppd(self):
+        permuted_data, permuted_mc_data = self.permute_data()
+        permuted_distances_data = self.calculate_distance_ppd(permuted_data, permuted_data, self.var_lst)
+        permuted_distances_mc_data = self.calculate_distance_ppd(permuted_data, permuted_mc_data, self.var_lst)
         permuted_T_value = self.calculate_T(permuted_distances_data, permuted_distances_mc_data, len(permuted_data), len(permuted_mc_data))
         return permuted_T_value
 
-    # Combination and random selection of original data and MC data
-    @staticmethod
-    def permute_data(data, mc_data):
-        combined_data = np.concatenate([data, mc_data])
+    def permute_data(self):
+        combined_data = np.concatenate([self.data, self.data_mc])
         np.random.shuffle(combined_data)
-        permuted_data = combined_data[:len(data)]
-        permuted_mc_data = combined_data[len(data):]
-        return permuted_data, permuted_mc_data
-
-# Class for choosing a comparison method and performing calculations
-class GOFMethods:
-    def __init__(self, method, var_lst=None, chunk_size=1000):
-        if method == 'PPD':
-            self.similarity_method = PPDSimilarity(var_lst, chunk_size)
-        else:
-            raise ValueError("Invalid method specified")
-
-    def compare_datasets(self, dataset1, dataset2):
-        return self.similarity_method.compare_datasets(dataset1, dataset2)
-
-    def calculate_permuted_statistics(self, dataset1, dataset2, n_permutations=25):
-        # add parallel processing
-        permuted_values = Parallel(n_jobs=-1, backend="loky")(
-            delayed(self.similarity_method.calculate_permuted_statistic)(dataset1, dataset2) for _ in range(n_permutations)
-        )
-        return np.array(permuted_values)
-
-    def calculate_p_value(self, observed_value, permuted_values):
-        return np.mean(permuted_values < observed_value)
+        return combined_data[:len(self.data)], combined_data[len(self.data):]
 
 
-def good_fits(data, data_mc=[], var_lst=[], method='PPD', chunk_size=1000, n_permutations=25):
-    if not isinstance(var_lst, list) or not all(isinstance(var, str) for var in var_lst):
-        raise TypeError("Var list must be a list of strings")
-    if method not in ['PPD']:
-        raise ValueError("Unknown method. Use 'PPD'")
+    def calculate_local_density(self, data, k=5):
+        kdtree = KDTree(np.vstack([data[var] for var in data.dtype.names]).T)
+        densities = []
+        for point in data:
+            distances, _ = kdtree.query([np.array([point[var] for var in data.dtype.names])], k=k+1)
+            densities.append(np.mean(distances[0][1:]))
+        return np.array(densities)
 
-    ds = ds2numpy(data, var_lst)
-    ds_mc = ds2numpy(data_mc, var_lst)
+    def calculate_kernel_density(self, data, bw_method='scott'):
+        data_numeric = np.vstack([data[var] for var in data.dtype.names]).T
+        kde = gaussian_kde(data_numeric.T, bw_method=bw_method)
+        return kde(data_numeric.T)
 
-    gof = GOFMethods(method, var_lst=var_lst, chunk_size=chunk_size)
-    observed_value = gof.compare_datasets(ds, ds_mc)
+    def calculate_permuted_U(self, method, k=5, bw_method='scott'):
+        if method == 'LD':
+            permuted_data, permuted_mc_data = self.permute_data()
+            permuted_density_data = self.calculate_local_density(permuted_data, k)
+            permuted_density_mc_data = self.calculate_local_density(permuted_mc_data, k)
+        elif method == 'KB':
+            permuted_data, permuted_mc_data = self.permute_data()
+            permuted_density_data = self.calculate_kernel_density(permuted_data, bw_method)
+            permuted_density_mc_data = self.calculate_kernel_density(permuted_mc_data, bw_method)
+        U_stat, _ = mannwhitneyu(permuted_density_data, permuted_density_mc_data, alternative='two-sided')
+        return U_stat
 
-    permuted_values = gof.calculate_permuted_statistics(ds, ds_mc, n_permutations)
-    p_value = gof.calculate_p_value(observed_value, permuted_values)
-    return observed_value, p_value
+    def choose_gof_method(self, method, k=5, bw_method='scott', n_permutations=25):
+        if len(self.data) == 0 or len(self.data_mc) == 0:
+            raise ValueError("Data and MC data must not be empty")
+
+        try:
+            if method == 'PPD':
+                distances_data = self.calculate_distance_ppd(self.data, self.data, self.var_lst)
+                distances_mc_data = self.calculate_distance_ppd(self.data, self.data_mc, self.var_lst)
+                observed_T = self.calculate_T(distances_data, distances_mc_data, len(self.data), len(self.data_mc))
+                calculate_permuted = self.calculate_permuted_T_ppd
+                observed_value = observed_T
+
+            elif method in ['LD', 'KB']:
+                if method == 'LD':
+                    density_data = self.calculate_local_density(self.data, k)
+                    density_mc_data = self.calculate_local_density(self.data_mc, k)
+                elif method == 'KB':
+                    density_data = self.calculate_kernel_density(self.data, bw_method)
+                    density_mc_data = self.calculate_kernel_density(self.data_mc, bw_method)
+                observed_U, _ = mannwhitneyu(density_data, density_mc_data, alternative='two-sided')
+                calculate_permuted = lambda: self.calculate_permuted_U(method, k, bw_method)
+                observed_value = observed_U
+
+            else:
+                raise ValueError("Invalid method specified")
+
+            permuted_values = Parallel(n_jobs=-1, backend="loky")(
+                delayed(calculate_permuted)() for _ in range(n_permutations)
+            )
+
+            p_value = np.mean(np.array(permuted_values) < observed_value)
+            return observed_value, p_value
+
+        except Exception as e:
+            print(f"Error in joblib Parallel: {e}")
+            traceback.print_exc()
+            raise e
 
 
-#########################################################################################
-#########################################################################################
-#################################### Test Results #######################################
+def good_fits(data, data_mc=[], var_lst=[], method='PPD', k=5, bw_method='scott'):
 
-# PPD: len(rd) = 10^2, len(mc) = 10^4, p-value = 0.1, time = 12.3 sec, max cpu = 16.4 MB
-# PPD: len(rd) = 10^4, len(mc) = 10^4, p-value = 0.6, time = 23.1 sec, max cpu = 250.3 MB
+    transformer_data = DataToNumpy(data, var_lst)
+    data_numpy = transformer_data.transform()
 
-#########################################################################################
-#########################################################################################
+    transformer_mc = DataToNumpy(data_mc, var_lst)
+    mc_numpy = transformer_mc.transform()
+
+    gof = GOFMethods(data_numpy, mc_numpy, var_lst)
+    
+    if method == 'kNN':
+        return gof.distance_to_nearest_neighbor(transformer.data_np)
+
+    if method in ['PPD', 'LD', 'KB', 'MS']:
+        return gof.choose_gof_method(method, k, bw_method, n_permutations=25)
+    
+    raise ValueError("Unknown method")
