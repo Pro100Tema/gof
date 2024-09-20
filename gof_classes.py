@@ -43,6 +43,7 @@ class DataToNumpy:
         else:
             raise ValueError("Data is not a valid PDF for transformation.")
 
+
 class GOFMethods:
     def __init__(self, data, data_mc, var_lst):
         self.data = data
@@ -85,7 +86,6 @@ class GOFMethods:
         np.random.shuffle(combined_data)
         return combined_data[:len(self.data)], combined_data[len(self.data):]
 
-
     def calculate_local_density(self, data, k=5):
         kdtree = KDTree(np.vstack([data[var] for var in data.dtype.names]).T)
         densities = []
@@ -111,11 +111,18 @@ class GOFMethods:
         U_stat, _ = mannwhitneyu(permuted_density_data, permuted_density_mc_data, alternative='two-sided')
         return U_stat
 
+    def calculate_permuted_T_ms(self):
+        permuted_data, permuted_mc_data = self.permute_data()
+        within_distances = self.calculate_distance_ppd(permuted_data, permuted_data, self.var_lst)
+        between_distances = self.calculate_distance_ppd(permuted_data, permuted_mc_data, self.var_lst)
+        return self.calculate_T(within_distances, between_distances, len(permuted_data), len(permuted_mc_data))
+
     def choose_gof_method(self, method, k=5, bw_method='scott', n_permutations=25):
         if len(self.data) == 0 or len(self.data_mc) == 0:
             raise ValueError("Data and MC data must not be empty")
 
         try:
+            # В зависимости от метода выбираем наблюдаемое значение
             if method == 'PPD':
                 distances_data = self.calculate_distance_ppd(self.data, self.data, self.var_lst)
                 distances_mc_data = self.calculate_distance_ppd(self.data, self.data_mc, self.var_lst)
@@ -134,24 +141,50 @@ class GOFMethods:
                 calculate_permuted = lambda: self.calculate_permuted_U(method, k, bw_method)
                 observed_value = observed_U
 
+            elif method == 'MS':
+                within_distances = self.calculate_distance_ppd(self.data, self.data, self.var_lst)
+                between_distances = self.calculate_distance_ppd(self.data, self.data_mc, self.var_lst)
+                observed_T = self.calculate_T(within_distances, between_distances, len(self.data), len(self.data_mc))
+                calculate_permuted = self.calculate_permuted_T_ms
+                observed_value = observed_T
+
             else:
                 raise ValueError("Invalid method specified")
 
-            permuted_values = Parallel(n_jobs=-1, backend="loky")(
-                delayed(calculate_permuted)() for _ in range(n_permutations)
-            )
+            try:
+                permuted_values = Parallel(n_jobs=-1, backend="loky")(
+                    delayed(calculate_permuted)() for _ in range(n_permutations)
+                )
+            except Exception as e:
+                print(f"Error in joblib Parallel: {e}")
+                print("Switching to Ostap WorkManager")
+
+                permuted_values = self.work_manager_parallel(calculate_permuted, n_permutations)
 
             p_value = np.mean(np.array(permuted_values) < observed_value)
             return observed_value, p_value
 
         except Exception as e:
-            print(f"Error in joblib Parallel: {e}")
+            print(f"Error in choose_gof_method: {e}")
             traceback.print_exc()
             raise e
 
+    def work_manager_parallel(self, calculate_permuted, n_permutations):
+
+        manager = WorkManager(ncpus=-1, silent=True)
+        tasks = [(i,) for i in range(n_permutations)]
+
+        def task_function(_):
+            return calculate_permuted()
+
+        # Используем ProgressBar для удобства отслеживания прогресса
+        with ProgressBar(min_value=0, max_value=n_permutations) as progress_bar:
+            results = manager.process(task_function, tasks, progress=progress_bar)
+
+        return results
+
 
 def good_fits(data, data_mc=[], var_lst=[], method='PPD', k=5, bw_method='scott'):
-
     transformer_data = DataToNumpy(data, var_lst)
     data_numpy = transformer_data.transform()
 
