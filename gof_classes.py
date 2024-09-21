@@ -111,18 +111,42 @@ class GOFMethods:
         U_stat, _ = mannwhitneyu(permuted_density_data, permuted_density_mc_data, alternative='two-sided')
         return U_stat
 
-    def calculate_permuted_T_ms(self):
-        permuted_data, permuted_mc_data = self.permute_data()
-        within_distances = self.calculate_distance_ppd(permuted_data, permuted_data, self.var_lst)
-        between_distances = self.calculate_distance_ppd(permuted_data, permuted_mc_data, self.var_lst)
-        return self.calculate_T(within_distances, between_distances, len(permuted_data), len(permuted_mc_data))
+
+    def calculate_T_MS(self, sum_within, sum_between, n_within, n_between):
+        return (1 / (n_within**2)) * sum_within - (1 / (n_within * n_between)) * sum_between
+
+
+    def permute_and_split(self, data, mc_data):
+        combined_data = np.concatenate([data, mc_data])
+        np.random.shuffle(combined_data)
+        half_point = len(combined_data) // 2
+        return combined_data[:half_point], combined_data[half_point:]
+
+
+    def calculate_distances_MS(self, data1, data2):
+        data1_numeric = np.vstack([data1[var] for var in data1.dtype.names]).T
+        data2_numeric = np.vstack([data2[var] for var in data2.dtype.names]).T
+        return cdist(data1_numeric, data2_numeric, 'euclidean')
+
+    def sum_distances(self, distances):
+        return np.sum(distances)
+
+    def calculate_permuted_T_mixed(self, data, mc_data):
+
+        permuted_data, permuted_mc_data = self.permute_and_split(data, mc_data)
+        within_distances = self.calculate_distances_MS(permuted_data, permuted_data)
+        between_distances = self.calculate_distances_MS(permuted_data, permuted_mc_data)
+        sum_within = self.sum_distances(within_distances)
+        sum_between = self.sum_distances(between_distances)
+        permuted_T_value = self.calculate_T_MS(sum_within, sum_between, len(permuted_data), len(permuted_mc_data))
+        return permuted_T_value
+
 
     def choose_gof_method(self, method, k=5, bw_method='scott', n_permutations=25):
         if len(self.data) == 0 or len(self.data_mc) == 0:
             raise ValueError("Data and MC data must not be empty")
 
         try:
-            # В зависимости от метода выбираем наблюдаемое значение
             if method == 'PPD':
                 distances_data = self.calculate_distance_ppd(self.data, self.data, self.var_lst)
                 distances_mc_data = self.calculate_distance_ppd(self.data, self.data_mc, self.var_lst)
@@ -142,10 +166,16 @@ class GOFMethods:
                 observed_value = observed_U
 
             elif method == 'MS':
-                within_distances = self.calculate_distance_ppd(self.data, self.data, self.var_lst)
-                between_distances = self.calculate_distance_ppd(self.data, self.data_mc, self.var_lst)
-                observed_T = self.calculate_T(within_distances, between_distances, len(self.data), len(self.data_mc))
-                calculate_permuted = self.calculate_permuted_T_ms
+                # Pre-calculate distances for data and MC data
+                observed_within_distances = self.calculate_distances_MS(self.data, self.data)
+                observed_between_distances = self.calculate_distances_MS(self.data, self.data_mc)
+                # get sum of distances
+                sum_within = self.sum_distances(observed_within_distances)
+                sum_between = self.sum_distances(observed_between_distances)
+                observed_T = self.calculate_T_MS(sum_within, sum_between, len(self.data), len(self.data_mc))
+            
+                # add parallel processing
+                calculate_permuted = lambda: self.calculate_permuted_T_mixed(self.data, self.data_mc)
                 observed_value = observed_T
 
             else:
@@ -185,6 +215,7 @@ class GOFMethods:
 
 
 def good_fits(data, data_mc=[], var_lst=[], method='PPD', k=5, bw_method='scott'):
+
     transformer_data = DataToNumpy(data, var_lst)
     data_numpy = transformer_data.transform()
 
