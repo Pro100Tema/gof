@@ -20,6 +20,7 @@ from joblib import Parallel, delayed
 from scipy.spatial import KDTree
 from scipy.stats import mannwhitneyu, gaussian_kde
 from ROOT import RooAbsPdf, RooDataSet
+from scipy.spatial import cKDTree
 
 class DataToNumpy:
     def __init__(self, data, var_lst):
@@ -50,6 +51,11 @@ class GOFMethods:
         self.data_mc = data_mc
         self.var_lst = var_lst
 
+    def distance_to_nearest_neighbor(self, data):
+        tree = cKDTree(self.data) # creating k-tree
+        distances, _ = tree.query(self.data, k=2) # calculating the distance to the nearest neighbor
+        return np.mean(distances[:, 1])
+    
     @staticmethod
     def calculate_T(sum_nd, sum_mc, nd, nmc):
         return (1 / (nd**2)) * sum_nd - (1 / (nd * nmc)) * sum_mc
@@ -200,14 +206,12 @@ class GOFMethods:
             raise e
 
     def work_manager_parallel(self, calculate_permuted, n_permutations):
-
         manager = WorkManager(ncpus=-1, silent=True)
         tasks = [(i,) for i in range(n_permutations)]
 
         def task_function(_):
             return calculate_permuted()
 
-        # Используем ProgressBar для удобства отслеживания прогресса
         with ProgressBar(min_value=0, max_value=n_permutations) as progress_bar:
             results = manager.process(task_function, tasks, progress=progress_bar)
 
@@ -216,6 +220,10 @@ class GOFMethods:
 
 def good_fits(data, data_mc=[], var_lst=[], method='PPD', k=5, bw_method='scott'):
 
+    if method == 'kNN':
+        gof2 = GOFMethods(data, data_mc, var_lst)
+        return gof2.distance_to_nearest_neighbor(data)
+
     transformer_data = DataToNumpy(data, var_lst)
     data_numpy = transformer_data.transform()
 
@@ -223,9 +231,6 @@ def good_fits(data, data_mc=[], var_lst=[], method='PPD', k=5, bw_method='scott'
     mc_numpy = transformer_mc.transform()
 
     gof = GOFMethods(data_numpy, mc_numpy, var_lst)
-    
-    if method == 'kNN':
-        return gof.distance_to_nearest_neighbor(transformer.data_np)
 
     if method in ['PPD', 'LD', 'KB', 'MS']:
         return gof.choose_gof_method(method, k, bw_method, n_permutations=25)
