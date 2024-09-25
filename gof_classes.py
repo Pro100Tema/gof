@@ -236,3 +236,29 @@ def good_fits(data, data_mc=[], var_lst=[], method='PPD', k=5, bw_method='scott'
         return gof.choose_gof_method(method, k, bw_method, n_permutations=25)
     
     raise ValueError("Unknown method")
+
+
+#########################################################################################
+#########################################################################################
+#################################### New Test Results ###################################
+
+# PPD: len(rd) = 10^2, len(mc) = 10^4, p-value = 0.1, time = 10.3 sec, max cpu = 16.4 MB
+# PPD: len(rd) = 10^4, len(mc) = 10^4, p-value = 0.6, time = 22.9 sec, max cpu = 250.3 MB
+
+# kNN: len(rd) = 10^2, p-value = 0.0, time = 0.03 sec, max cpu = 0.04 MB
+# kNN: len(rd) = 10^4, p-value = 0.0, time = 1.2 sec, max cpu = 2.0 MB
+# kNN: len(rd) = 10^5, p-value = 0.0, time = 30.5 sec, max cpu = 20.0 MB
+
+# LD: len(rd) = 10^2, len(mc) = 10^4, p-value = 0.36, time = 2.1 sec, max cpu = 1.1 MB
+# LD: len(rd) = 10^4, len(mc) = 10^4, p-value = 0.88, time = 4.1 sec, max cpu = 1.9 MB
+# LD: len(rd) = 10^4, len(mc) = 10^5, p-value = 0.0, time = 23.4 sec, max cpu = 10.6 MB
+
+# KB: len(rd) = 10^2, len(mc) = 10^4, p-value = 0.0, time = 3.8 sec, max cpu = 1.3 MB
+# KB: len(rd) = 10^4, len(mc) = 10^4, p-value = 0.64, time = 7.4 sec, max cpu = 2.4 MB
+# KB: len(rd) = 10^4, len(mc) = 10^5, p-value = 1.0, time = 374.7 sec, max cpu = 13.3 MB
+
+# MS: len(rd) = 10^2, len(mc) = 10^4, p-value = 0.0, time = 0.8 sec, max cpu = 8.7 MB
+# MS: len(rd) = 10^4, len(mc) = 10^4, p-value = 0.6, time = 13.6 sec, max cpu = 1601.1 MB
+
+#########################################################################################
+#########################################################################################
