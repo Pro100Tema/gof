@@ -37,13 +37,12 @@ class DataToNumpy:
         else:
             raise ValueError(f"Unsupported data type: {type(self.data)}")
 
-    def _transform_pdf(self, n_events=1000):
+    def _transform_pdf(self):
         if isinstance(self.data, RooAbsPdf):
-            data_pdf = self.data.generate(RooArgSet(self.var_lst), n_events)
+            data_pdf = self.data.generate(RooArgSet(*self.var_lst))
             return ds2numpy(data_pdf, self.var_lst)
         else:
             raise ValueError("Data is not a valid PDF for transformation.")
-
 
 class GOFMethods:
     def __init__(self, data, data_mc, var_lst):
@@ -172,15 +171,11 @@ class GOFMethods:
                 observed_value = observed_U
 
             elif method == 'MS':
-                # Pre-calculate distances for data and MC data
                 observed_within_distances = self.calculate_distances_MS(self.data, self.data)
                 observed_between_distances = self.calculate_distances_MS(self.data, self.data_mc)
-                # get sum of distances
                 sum_within = self.sum_distances(observed_within_distances)
                 sum_between = self.sum_distances(observed_between_distances)
                 observed_T = self.calculate_T_MS(sum_within, sum_between, len(self.data), len(self.data_mc))
-            
-                # add parallel processing
                 calculate_permuted = lambda: self.calculate_permuted_T_mixed(self.data, self.data_mc)
                 observed_value = observed_T
 
@@ -191,11 +186,10 @@ class GOFMethods:
                 permuted_values = Parallel(n_jobs=-1, backend="loky")(
                     delayed(calculate_permuted)() for _ in range(n_permutations)
                 )
-            except Exception as e:
-                print(f"Error in joblib Parallel: {e}")
-                print("Switching to Ostap WorkManager")
-
-                permuted_values = self.work_manager_parallel(calculate_permuted, n_permutations)
+            except Exception as e_joblib:
+                print(f"Error in joblib Parallel: {e_joblib}")
+                print("Switching to to sequential processing...")
+                permuted_values = [calculate_permuted() for _ in range(n_permutations)]
 
             p_value = np.mean(np.array(permuted_values) < observed_value)
             return observed_value, p_value
@@ -204,18 +198,6 @@ class GOFMethods:
             print(f"Error in choose_gof_method: {e}")
             traceback.print_exc()
             raise e
-
-    def work_manager_parallel(self, calculate_permuted, n_permutations):
-        manager = WorkManager(ncpus=-1, silent=True)
-        tasks = [(i,) for i in range(n_permutations)]
-
-        def task_function(_):
-            return calculate_permuted()
-
-        with ProgressBar(min_value=0, max_value=n_permutations) as progress_bar:
-            results = manager.process(task_function, tasks, progress=progress_bar)
-
-        return results
 
 
 def good_fits(data, data_mc=[], var_lst=[], method='PPD', k=5, bw_method='scott'):
@@ -236,6 +218,8 @@ def good_fits(data, data_mc=[], var_lst=[], method='PPD', k=5, bw_method='scott'
         return gof.choose_gof_method(method, k, bw_method, n_permutations=25)
     
     raise ValueError("Unknown method")
+
+
 
 
 #########################################################################################
