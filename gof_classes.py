@@ -80,16 +80,21 @@ class GOFMethods:
             return np.sum(distances)
 
     def calculate_permuted_T_ppd(self):
-        permuted_data, permuted_mc_data = self.permute_data()
+        permuted_data, permuted_mc_data = self.permute_and_split('PPD')
         permuted_distances_data = self.calculate_distance_ppd(permuted_data, permuted_data, self.var_lst)
         permuted_distances_mc_data = self.calculate_distance_ppd(permuted_data, permuted_mc_data, self.var_lst)
         permuted_T_value = self.calculate_T(permuted_distances_data, permuted_distances_mc_data, len(permuted_data), len(permuted_mc_data))
         return permuted_T_value
 
-    def permute_data(self):
+    def permute_and_split(self, method):
         combined_data = np.concatenate([self.data, self.data_mc])
         np.random.shuffle(combined_data)
-        return combined_data[:len(self.data)], combined_data[len(self.data):]
+
+        if method == 'MS':
+            half_point = len(combined_data) // 2
+            return combined_data[:half_point], combined_data[half_point:]
+        else:
+            return combined_data[:len(self.data)], combined_data[len(self.data):]
 
     def calculate_local_density(self, data, k=5):
         kdtree = KDTree(np.vstack([data[var] for var in data.dtype.names]).T)
@@ -105,12 +110,11 @@ class GOFMethods:
         return kde(data_numeric.T)
 
     def calculate_permuted_U(self, method, k=5, bw_method='scott'):
+        permuted_data, permuted_mc_data = self.permute_and_split('LD')
         if method == 'LD':
-            permuted_data, permuted_mc_data = self.permute_data()
             permuted_density_data = self.calculate_local_density(permuted_data, k)
             permuted_density_mc_data = self.calculate_local_density(permuted_mc_data, k)
         elif method == 'KB':
-            permuted_data, permuted_mc_data = self.permute_data()
             permuted_density_data = self.calculate_kernel_density(permuted_data, bw_method)
             permuted_density_mc_data = self.calculate_kernel_density(permuted_mc_data, bw_method)
         U_stat, _ = mannwhitneyu(permuted_density_data, permuted_density_mc_data, alternative='two-sided')
@@ -119,14 +123,6 @@ class GOFMethods:
 
     def calculate_T_MS(self, sum_within, sum_between, n_within, n_between):
         return (1 / (n_within**2)) * sum_within - (1 / (n_within * n_between)) * sum_between
-
-
-    def permute_and_split(self, data, mc_data):
-        combined_data = np.concatenate([data, mc_data])
-        np.random.shuffle(combined_data)
-        half_point = len(combined_data) // 2
-        return combined_data[:half_point], combined_data[half_point:]
-
 
     def calculate_distances_MS(self, data1, data2):
         data1_numeric = np.vstack([data1[var] for var in data1.dtype.names]).T
@@ -138,7 +134,7 @@ class GOFMethods:
 
     def calculate_permuted_T_mixed(self, data, mc_data):
 
-        permuted_data, permuted_mc_data = self.permute_and_split(data, mc_data)
+        permuted_data, permuted_mc_data = self.permute_and_split('MS')
         within_distances = self.calculate_distances_MS(permuted_data, permuted_data)
         between_distances = self.calculate_distances_MS(permuted_data, permuted_mc_data)
         sum_within = self.sum_distances(within_distances)
